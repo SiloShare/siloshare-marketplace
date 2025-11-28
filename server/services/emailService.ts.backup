@@ -1,0 +1,427 @@
+import { Resend } from "resend";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+const FROM_EMAIL = "SiloShare <noreply@siloshare.com.br>";
+
+/**
+ * Gera um código de verificação de 6 dígitos
+ */
+export function generateVerificationCode(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/**
+ * Envia e-mail de verificação com código de 6 dígitos
+ */
+export async function sendVerificationEmail(
+  toEmail: string,
+  userName: string,
+  verificationCode: string
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: toEmail,
+      subject: "Verifique seu e-mail - SiloShare",
+      html: getVerificationEmailTemplate(userName, verificationCode),
+    });
+
+    if (error) {
+      console.error("Erro ao enviar e-mail:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, messageId: data?.id };
+  } catch (error: any) {
+    console.error("Erro ao enviar e-mail:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Template de e-mail de verificação
+ */
+function getVerificationEmailTemplate(
+  userName: string,
+  verificationCode: string
+): string {
+  return `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verificação de E-mail - SiloShare</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: #f5f5f5;
+    }
+    .container {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    .header {
+      background-color: #000000;
+      padding: 40px 20px;
+      text-align: center;
+    }
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      color: #ffffff;
+    }
+    .logo-icon {
+      width: 40px;
+      height: 40px;
+    }
+    .logo-text {
+      font-size: 28px;
+      font-weight: bold;
+      letter-spacing: -0.5px;
+    }
+    .content {
+      padding: 40px 30px;
+    }
+    .greeting {
+      font-size: 18px;
+      color: #333333;
+      margin-bottom: 20px;
+    }
+    .message {
+      font-size: 16px;
+      color: #666666;
+      line-height: 1.6;
+      margin-bottom: 30px;
+    }
+    .code-container {
+      background-color: #f9f9f9;
+      border: 2px solid #e5e5e5;
+      border-radius: 8px;
+      padding: 30px;
+      text-align: center;
+      margin: 30px 0;
+    }
+    .code-label {
+      font-size: 14px;
+      color: #999999;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+    .code {
+      font-size: 36px;
+      font-weight: bold;
+      color: #000000;
+      letter-spacing: 8px;
+      font-family: 'Courier New', monospace;
+    }
+    .expiry {
+      font-size: 14px;
+      color: #999999;
+      margin-top: 15px;
+    }
+    .footer {
+      border-top: 1px solid #e5e5e5;
+      padding: 30px;
+      text-align: center;
+      font-size: 14px;
+      color: #999999;
+    }
+    .footer-links {
+      margin-top: 15px;
+    }
+    .footer-link {
+      color: #666666;
+      text-decoration: none;
+      margin: 0 10px;
+    }
+    .footer-link:hover {
+      color: #000000;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header com Logo -->
+    <div class="header">
+      <div class="logo">
+        <!-- Ícone de Trigo SVG -->
+        <svg class="logo-icon" viewBox="0 0 100 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M50 10 L50 130" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+          <ellipse cx="35" cy="25" rx="12" ry="8" fill="#ffffff"/>
+          <ellipse cx="32" cy="40" rx="13" ry="9" fill="#ffffff"/>
+          <ellipse cx="30" cy="55" rx="14" ry="10" fill="#ffffff"/>
+          <ellipse cx="28" cy="70" rx="13" ry="9" fill="#ffffff"/>
+          <ellipse cx="30" cy="85" rx="12" ry="8" fill="#ffffff"/>
+          <ellipse cx="32" cy="100" rx="11" ry="7" fill="#ffffff"/>
+          <ellipse cx="65" cy="25" rx="12" ry="8" fill="#ffffff"/>
+          <ellipse cx="68" cy="40" rx="13" ry="9" fill="#ffffff"/>
+          <ellipse cx="70" cy="55" rx="14" ry="10" fill="#ffffff"/>
+          <ellipse cx="72" cy="70" rx="13" ry="9" fill="#ffffff"/>
+          <ellipse cx="70" cy="85" rx="12" ry="8" fill="#ffffff"/>
+          <ellipse cx="68" cy="100" rx="11" ry="7" fill="#ffffff"/>
+          <path d="M47 25 L35 25" stroke="#ffffff" stroke-width="2"/>
+          <path d="M47 40 L32 40" stroke="#ffffff" stroke-width="2"/>
+          <path d="M47 55 L30 55" stroke="#ffffff" stroke-width="2"/>
+          <path d="M47 70 L28 70" stroke="#ffffff" stroke-width="2"/>
+          <path d="M47 85 L30 85" stroke="#ffffff" stroke-width="2"/>
+          <path d="M47 100 L32 100" stroke="#ffffff" stroke-width="2"/>
+          <path d="M53 25 L65 25" stroke="#ffffff" stroke-width="2"/>
+          <path d="M53 40 L68 40" stroke="#ffffff" stroke-width="2"/>
+          <path d="M53 55 L70 55" stroke="#ffffff" stroke-width="2"/>
+          <path d="M53 70 L72 70" stroke="#ffffff" stroke-width="2"/>
+          <path d="M53 85 L70 85" stroke="#ffffff" stroke-width="2"/>
+          <path d="M53 100 L68 100" stroke="#ffffff" stroke-width="2"/>
+        </svg>
+        <span class="logo-text">SiloShare</span>
+      </div>
+    </div>
+
+    <!-- Conteúdo -->
+    <div class="content">
+      <div class="greeting">Olá, ${userName}!</div>
+      
+      <div class="message">
+        Obrigado por se cadastrar na SiloShare. Para completar seu cadastro e verificar seu e-mail, 
+        use o código de verificação abaixo:
+      </div>
+
+      <div class="code-container">
+        <div class="code-label">Código de Verificação</div>
+        <div class="code">${verificationCode}</div>
+        <div class="expiry">Este código expira em 15 minutos</div>
+      </div>
+
+      <div class="message">
+        Se você não solicitou este código, pode ignorar este e-mail com segurança.
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <div>© 2025 SiloShare. Todos os direitos reservados.</div>
+      <div class="footer-links">
+        <a href="https://siloshare.com.br/termos" class="footer-link">Termos de Uso</a>
+        <a href="https://siloshare.com.br/privacidade" class="footer-link">Privacidade</a>
+        <a href="https://siloshare.com.br/ajuda" class="footer-link">Ajuda</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
+
+/**
+ * Envia e-mail de boas-vindas após verificação
+ */
+export async function sendWelcomeEmail(
+  toEmail: string,
+  userName: string
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: toEmail,
+      subject: "Bem-vindo à SiloShare! 🌾",
+      html: getWelcomeEmailTemplate(userName),
+    });
+
+    if (error) {
+      console.error("Erro ao enviar e-mail de boas-vindas:", error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, messageId: data?.id };
+  } catch (error: any) {
+    console.error("Erro ao enviar e-mail de boas-vindas:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Template de e-mail de boas-vindas
+ */
+function getWelcomeEmailTemplate(userName: string): string {
+  return `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bem-vindo - SiloShare</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: #f5f5f5;
+    }
+    .container {
+      max-width: 600px;
+      margin: 40px auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    .header {
+      background-color: #000000;
+      padding: 40px 20px;
+      text-align: center;
+    }
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      color: #ffffff;
+    }
+    .logo-text {
+      font-size: 28px;
+      font-weight: bold;
+    }
+    .content {
+      padding: 40px 30px;
+    }
+    .title {
+      font-size: 24px;
+      font-weight: bold;
+      color: #000000;
+      margin-bottom: 20px;
+    }
+    .message {
+      font-size: 16px;
+      color: #666666;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .cta-button {
+      display: inline-block;
+      background-color: #000000;
+      color: #ffffff;
+      padding: 14px 32px;
+      text-decoration: none;
+      border-radius: 6px;
+      font-weight: 600;
+      margin: 20px 0;
+    }
+    .footer {
+      border-top: 1px solid #e5e5e5;
+      padding: 30px;
+      text-align: center;
+      font-size: 14px;
+      color: #999999;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">
+        <span class="logo-text">SiloShare</span>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="title">Bem-vindo à SiloShare, ${userName}!</div>
+      
+      <div class="message">
+        Estamos felizes em tê-lo conosco. Agora você pode aproveitar todos os recursos da nossa plataforma:
+      </div>
+
+      <ul>
+        <li>Buscar silos disponíveis em todo o Brasil</li>
+        <li>Cadastrar seus próprios silos para armazenagem</li>
+        <li>Gerenciar reservas e contratos</li>
+        <li>Acompanhar estatísticas em tempo real</li>
+      </ul>
+
+      <div style="text-align: center;">
+        <a href="https://siloshare.com.br/dashboard" class="cta-button">
+          Acessar Meu Painel
+        </a>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div>© 2025 SiloShare. Todos os direitos reservados.</div>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
+
+/**
+ * Envia e-mail de notificação de silo aprovado
+ */
+export async function sendSiloApprovedEmail(
+  toEmail: string,
+  userName: string,
+  siloName: string
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: toEmail,
+      subject: "Seu silo foi aprovado! - SiloShare",
+      html: `
+        <h1>Parabéns, ${userName}!</h1>
+        <p>Seu silo "<strong>${siloName}</strong>" foi aprovado e já está disponível na plataforma.</p>
+        <p>Acesse seu painel para gerenciar reservas e visualizar estatísticas.</p>
+        <a href="https://siloshare.com.br/dashboard">Acessar Painel</a>
+      `,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, messageId: data?.id };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Envia e-mail de notificação de silo recusado
+ */
+export async function sendSiloRejectedEmail(
+  toEmail: string,
+  userName: string,
+  siloName: string,
+  reason: string
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const { data, error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: toEmail,
+      subject: "Seu silo precisa de ajustes - SiloShare",
+      html: `
+        <h1>Olá, ${userName}</h1>
+        <p>Seu silo "<strong>${siloName}</strong>" foi recusado pela nossa equipe.</p>
+        <p><strong>Motivo:</strong> ${reason}</p>
+        <p>Por favor, faça os ajustes necessários e envie novamente para análise.</p>
+        <a href="https://siloshare.com.br/meus-silos">Ver Meus Silos</a>
+      `,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, messageId: data?.id };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+

@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1762054849229,
+      "tag": "0000_worried_ben_parker",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1762109641106,
+      "tag": "0001_tough_silver_centurion",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1762127936715,
+      "tag": "0002_dazzling_paladin",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1762128072877,
+      "tag": "0003_cold_pretty_boy",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1762128246148,
+      "tag": "0004_parched_eternals",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1762128400992,
+      "tag": "0005_mysterious_black_tom",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1762202302871,
+      "tag": "0006_same_rocket_raccoon",
+      "breakpoints": true
+    }
+  ]
+}

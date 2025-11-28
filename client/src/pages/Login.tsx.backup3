@@ -1,0 +1,209 @@
+import { useState } from "react";
+import { useLocation } from "wouter";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
+import { Wheat } from "lucide-react";
+import { toast } from "sonner";
+import { useAuthStore } from "@/stores/authStore";
+
+export default function Login() {
+  const [, setLocation] = useLocation();
+  const [activeTab, setActiveTab] = useState("login");
+
+  // Estado do formulário de login
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginSenha, setLoginSenha] = useState("");
+
+  // Estado do formulário de cadastro
+  const [cadastroNome, setCadastroNome] = useState("");
+  const [cadastroEmail, setCadastroEmail] = useState("");
+  const [cadastroSenha, setCadastroSenha] = useState("");
+  const [cadastroTipo, setCadastroTipo] = useState<"pf" | "pj">("pf");
+  const [cadastroCpfCnpj, setCadastroCpfCnpj] = useState("");
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = await useAuthStore.getState().login(loginEmail, loginSenha);
+    if (success) {
+      toast.success("Login realizado com sucesso!");
+      setLocation("/cadastrar-silo");
+    } else {
+      toast.error("Erro ao fazer login. Tente novamente.");
+    }
+  };
+
+  const handleCadastro = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = await useAuthStore.getState().register(
+      {
+        nome: cadastroNome,
+        email: cadastroEmail,
+        cpfCnpj: cadastroCpfCnpj,
+        telefone: "",
+        tipo: "produtor",
+      },
+      cadastroSenha
+    );
+    if (success) {
+      toast.success("Cadastro realizado com sucesso!");
+      setLocation("/dashboard");
+    } else {
+      toast.error("Erro ao criar conta. Tente novamente.");
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md p-8 shadow-lg">
+        {/* Logo */}
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-2 mb-2 cursor-pointer" onClick={() => setLocation("/")}>
+            <Wheat className="h-8 w-8 text-black" />
+            <h1 className="text-3xl font-bold">SiloShare</h1>
+          </div>
+          <p className="text-gray-600">Marketplace de Armazenagem e Transporte</p>
+        </div>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsTrigger value="login">Entrar</TabsTrigger>
+            <TabsTrigger value="cadastro">Cadastrar</TabsTrigger>
+          </TabsList>
+
+          {/* Tab de Login */}
+          <TabsContent value="login">
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <Label htmlFor="login-email">E-mail</Label>
+                <Input
+                  id="login-email"
+                  type="email"
+                  placeholder="seu@email.com"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="login-senha">Senha</Label>
+                <Input
+                  id="login-senha"
+                  type="password"
+                  placeholder="••••••••"
+                  value={loginSenha}
+                  onChange={(e) => setLoginSenha(e.target.value)}
+                  required
+                />
+              </div>
+              <Button type="submit" className="w-full bg-black hover:bg-gray-800 text-white">
+                Entrar
+              </Button>
+              <p className="text-center text-sm text-gray-600">
+                Esqueceu sua senha?{" "}
+                <a href="#" className="text-black font-medium hover:underline">
+                  Recuperar
+                </a>
+              </p>
+            </form>
+          </TabsContent>
+
+          {/* Tab de Cadastro */}
+          <TabsContent value="cadastro">
+            <form onSubmit={handleCadastro} className="space-y-4">
+              <div>
+                <Label htmlFor="cadastro-nome">Nome Completo</Label>
+                <Input
+                  id="cadastro-nome"
+                  type="text"
+                  placeholder="Seu nome"
+                  value={cadastroNome}
+                  onChange={(e) => setCadastroNome(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="cadastro-email">E-mail</Label>
+                <Input
+                  id="cadastro-email"
+                  type="email"
+                  placeholder="seu@email.com"
+                  value={cadastroEmail}
+                  onChange={(e) => setCadastroEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="cadastro-senha">Senha</Label>
+                <Input
+                  id="cadastro-senha"
+                  type="password"
+                  placeholder="••••••••"
+                  value={cadastroSenha}
+                  onChange={(e) => setCadastroSenha(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <Label>Tipo de Cadastro</Label>
+                <div className="flex gap-4 mt-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="tipo"
+                      value="pf"
+                      checked={cadastroTipo === "pf"}
+                      onChange={() => setCadastroTipo("pf")}
+                    />
+                    <span>Pessoa Física (CPF)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="tipo"
+                      value="pj"
+                      checked={cadastroTipo === "pj"}
+                      onChange={() => setCadastroTipo("pj")}
+                    />
+                    <span>Pessoa Jurídica (CNPJ)</span>
+                  </label>
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="cadastro-cpfcnpj">
+                  {cadastroTipo === "pf" ? "CPF" : "CNPJ"}
+                </Label>
+                <Input
+                  id="cadastro-cpfcnpj"
+                  type="text"
+                  placeholder={cadastroTipo === "pf" ? "000.000.000-00" : "00.000.000/0000-00"}
+                  value={cadastroCpfCnpj}
+                  onChange={(e) => setCadastroCpfCnpj(e.target.value)}
+                  required
+                />
+              </div>
+              <Button type="submit" className="w-full bg-black hover:bg-gray-800 text-white">
+                Criar Conta
+              </Button>
+              <p className="text-center text-sm text-gray-600">
+                Ao criar uma conta, você concorda com nossos{" "}
+                <a href="#" className="text-black font-medium hover:underline">
+                  Termos de Uso
+                </a>
+              </p>
+            </form>
+          </TabsContent>
+        </Tabs>
+
+        <div className="mt-6 text-center">
+          <Button variant="outline" onClick={() => setLocation("/")} className="w-full">
+            Voltar para Home
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+

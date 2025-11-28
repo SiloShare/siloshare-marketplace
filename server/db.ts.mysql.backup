@@ -1,0 +1,1213 @@
+import { eq, and, gte, lte, desc, sql, or } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/libsql";
+import { createClientimport {
+  InsertUser,
+  users,
+  silos,
+  InsertSilo,
+  Silo,
+  reservas,
+  verificationCodes,
+} from "../drizzle/schema";} from './_core/env';
+
+let _db: ReturnType<typeof drizzle> | null = null;
+
+// Lazily create the drizzle instance so local tooling can run without a DB.
+export async function getDb() {
+  if (!_db && process.env.DATABASE_URL) {
+    try {
+      _db = drizzle(process.env.DATABASE_URL);
+    } catch (error) {
+      console.warn("[Database] Failed to connect:", error);
+      _db = null;
+    }
+  }
+  return _db;
+}
+
+export async function upsertUser(user: InsertUser): Promise<void> {
+  if (!user.id) {
+    throw new Error("User ID is required for upsert");
+  }
+
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot upsert user: database not available");
+    return;
+  }
+
+  try {
+    const values: InsertUser = {
+      id: user.id,
+    };
+    const updateSet: Record<string, unknown> = {};
+
+    const textFields = ["name", "email", "password", "telefone", "cpfCnpj", "loginMethod"] as const;
+    type TextField = (typeof textFields)[number];
+
+    const assignNullable = (field: TextField) => {
+      const value = user[field];
+      if (value === undefined) return;
+      const normalized = value ?? null;
+      values[field] = normalized;
+      updateSet[field] = normalized;
+    };
+
+    textFields.forEach(assignNullable);
+
+    if (user.lastSignedIn !== undefined) {
+      values.lastSignedIn = user.lastSignedIn;
+      updateSet.lastSignedIn = user.lastSignedIn;
+    }
+    if (user.role === undefined) {
+      if (user.id === ENV.ownerId) {
+        user.role = 'admin';
+        values.role = 'admin';
+        updateSet.role = 'admin';
+      }
+    }
+
+    if (Object.keys(updateSet).length === 0) {
+      updateSet.lastSignedIn = new Date();
+    }
+
+    await db.insert(users).values(values).onDuplicateKeyUpdate({
+      set: updateSet,
+    });
+  } catch (error) {
+    console.error("[Database] Failed to upsert user:", error);
+    throw error;
+  }
+}
+
+export async function getUser(id: string) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get user: database not available");
+    return undefined;
+  }
+
+  const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get user by email: database not available");
+    return undefined;
+  }
+
+  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+
+  return result.length > 0 ? result[0] : undefined;
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE SILOS
+ * ========================================
+ */
+
+export async function createSilo(silo: InsertSilo): Promise<Silo> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(silos).values(silo);
+  const insertedId = Number(result[0].insertId);
+
+  const inserted = await db.select().from(silos).where(eq(silos.id, insertedId)).limit(1);
+  
+  // Buscar informações do fornecedor
+  const fornecedor = await db.select().from(users).where(eq(users.id, silo.userId)).limit(1);
+  
+  // Notificar admin sobre novo cadastro
+  if (fornecedor[0]) {
+    try {
+      const emailService = await import('./email');
+      await emailService.notificarAdminNovoCadastro({
+        id: insertedId,
+        nome: silo.nome,
+        localizacao: `${silo.cidade}, ${silo.estado}`,
+        capacidade: silo.capacidadeTotal,
+        preco: silo.precoTonelada,
+        fornecedorNome: fornecedor[0].name || 'Fornecedor',
+        fornecedorEmail: fornecedor[0].email,
+      });
+      console.log('[CreateSilo] Admin notificado sobre novo cadastro');
+    } catch (emailError) {
+      console.error('[CreateSilo] Erro ao notificar admin:', emailError);
+      // Não falhar o cadastro se o e-mail falhar
+    }
+  }
+  
+  return inserted[0];
+}
+
+export async function getSilos(filters?: {
+  cidade?: string;
+  estado?: string;
+  disponivel?: boolean;
+  precoMin?: number;
+  precoMax?: number;
+  capacidadeMin?: number;
+  tipoGrao?: string;
+  infraSecagem?: boolean;
+  infraLimpeza?: boolean;
+  infraAeracao?: boolean;
+  infraMonitoramento?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<Silo[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(silos);
+
+  const conditions = [];
+  if (filters?.cidade) {
+    conditions.push(eq(silos.cidade, filters.cidade));
+  }
+  if (filters?.estado) {
+    conditions.push(eq(silos.estado, filters.estado));
+  }
+  if (filters?.disponivel !== undefined) {
+    conditions.push(eq(silos.disponivel, filters.disponivel));
+  }
+  if (filters?.infraSecagem !== undefined) {
+    conditions.push(eq(silos.infraSecagem, filters.infraSecagem));
+  }
+  if (filters?.infraLimpeza !== undefined) {
+    conditions.push(eq(silos.infraLimpeza, filters.infraLimpeza));
+  }
+  if (filters?.infraAeracao !== undefined) {
+    conditions.push(eq(silos.infraAeracao, filters.infraAeracao));
+  }
+  if (filters?.infraMonitoramento !== undefined) {
+    conditions.push(eq(silos.infraMonitoramento, filters.infraMonitoramento));
+  }
+  if (filters?.capacidadeMin !== undefined) {
+    conditions.push(gte(silos.capacidadeDisponivel, filters.capacidadeMin));
+  }
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  query = query.orderBy(desc(silos.createdAt)) as any;
+
+  if (filters?.limit) {
+    query = query.limit(filters.limit) as any;
+  }
+  if (filters?.offset) {
+    query = query.offset(filters.offset) as any;
+  }
+
+  return await query;
+}
+
+export async function getSiloById(id: number): Promise<Silo | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(silos).where(eq(silos.id, id)).limit(1);
+  return result[0];
+}
+
+export async function getSilosByUserId(userId: string): Promise<Silo[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db.select().from(silos).where(eq(silos.userId, userId)).orderBy(desc(silos.createdAt));
+}
+
+export async function updateSilo(id: number, updates: Partial<InsertSilo>): Promise<Silo | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Validar capacidade disponível não pode ser maior que total
+  if (updates.capacidadeDisponivel !== undefined) {
+    const silo = await getSiloById(id);
+    if (silo && updates.capacidadeDisponivel > silo.capacidadeTotal) {
+      throw new Error("Capacidade disponível não pode ser maior que a capacidade total");
+    }
+  }
+
+  // Validar preço
+  if (updates.precoTonelada !== undefined) {
+    const preco = parseFloat(updates.precoTonelada);
+    if (preco < 0) {
+      throw new Error("Preço não pode ser negativo");
+    }
+  }
+
+  await db.update(silos).set({ ...updates, updatedAt: new Date() }).where(eq(silos.id, id));
+
+  return await getSiloById(id);
+}
+
+export async function deleteSilo(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Verificar se há reservas ativas para este silo
+  const reservasAtivas = await db
+    .select()
+    .from(reservas)
+    .where(
+      and(
+        eq(reservas.siloId, id),
+        or(
+          eq(reservas.status, "pendente"),
+          eq(reservas.status, "confirmada"),
+          eq(reservas.status, "em_andamento")
+        )
+      )
+    );
+
+  if (reservasAtivas.length > 0) {
+    throw new Error("Não é possível remover um silo com reservas ativas. Cancele as reservas primeiro.");
+  }
+
+  await db.delete(silos).where(eq(silos.id, id));
+}
+
+/**
+ * Buscar silos próximos por coordenadas (simplificado)
+ */
+export async function getSilosProximos(lat: number, lng: number, raioKm: number = 100): Promise<Silo[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  // Buscar todos os silos disponíveis (em produção, usar cálculo de distância real)
+  const todosSilos = await db
+    .select()
+    .from(silos)
+    .where(eq(silos.disponivel, true))
+    .orderBy(desc(silos.createdAt));
+
+  return todosSilos;
+}
+
+/**
+ * Contar total de silos com filtros
+ */
+export async function countSilos(filters?: {
+  cidade?: string;
+  estado?: string;
+  disponivel?: boolean;
+}): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+
+  let query = db.select({ count: sql<number>`count(*)` }).from(silos);
+
+  const conditions = [];
+  if (filters?.cidade) {
+    conditions.push(eq(silos.cidade, filters.cidade));
+  }
+  if (filters?.estado) {
+    conditions.push(eq(silos.estado, filters.estado));
+  }
+  if (filters?.disponivel !== undefined) {
+    conditions.push(eq(silos.disponivel, filters.disponivel));
+  }
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  const result = await query;
+  return result[0]?.count || 0;
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE RESERVAS
+ * ========================================
+ */
+
+export async function createReserva(reserva: InsertReserva): Promise<Reserva> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(reservas).values(reserva);
+  const insertedId = Number(result[0].insertId);
+
+  const inserted = await db.select().from(reservas).where(eq(reservas.id, insertedId)).limit(1);
+  return inserted[0];
+}
+
+export async function getReservas(filters?: {
+  produtorId?: string;
+  siloId?: number;
+  status?: string;
+}): Promise<Reserva[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  let query = db.select().from(reservas);
+
+  const conditions = [];
+  if (filters?.produtorId) {
+    conditions.push(eq(reservas.produtorId, filters.produtorId));
+  }
+  if (filters?.siloId) {
+    conditions.push(eq(reservas.siloId, filters.siloId));
+  }
+  if (filters?.status) {
+    conditions.push(eq(reservas.status, filters.status as any));
+  }
+
+  if (conditions.length > 0) {
+    query = query.where(and(...conditions)) as any;
+  }
+
+  return await query.orderBy(desc(reservas.createdAt));
+}
+
+export async function getReservaById(id: number): Promise<Reserva | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(reservas).where(eq(reservas.id, id)).limit(1);
+  return result[0];
+}
+
+export async function updateReserva(id: number, updates: Partial<InsertReserva>): Promise<Reserva | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(reservas).set({ ...updates, updatedAt: new Date() }).where(eq(reservas.id, id));
+
+  return await getReservaById(id);
+}
+
+export async function deleteReserva(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.delete(reservas).where(eq(reservas.id, id));
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE COTAÇÕES DE TRANSPORTE
+ * ========================================
+ */
+
+export async function createCotacaoTransporte(cotacao: InsertCotacaoTransporte): Promise<CotacaoTransporte> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(cotacoesTransporte).values(cotacao);
+  const insertedId = Number(result[0].insertId);
+
+  const inserted = await db.select().from(cotacoesTransporte).where(eq(cotacoesTransporte.id, insertedId)).limit(1);
+  return inserted[0];
+}
+
+export async function getCotacoesByReservaId(reservaId: number): Promise<CotacaoTransporte[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db.select().from(cotacoesTransporte).where(eq(cotacoesTransporte.reservaId, reservaId)).orderBy(desc(cotacoesTransporte.createdAt));
+}
+
+export async function updateCotacaoTransporte(id: number, updates: Partial<InsertCotacaoTransporte>): Promise<CotacaoTransporte | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(cotacoesTransporte).set({ ...updates, updatedAt: new Date() }).where(eq(cotacoesTransporte.id, id));
+
+  const result = await db.select().from(cotacoesTransporte).where(eq(cotacoesTransporte.id, id)).limit(1);
+  return result[0];
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE PRODUTORES
+ * ========================================
+ */
+
+export async function createProdutor(produtor: InsertProdutor): Promise<Produtor> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(produtores).values(produtor);
+  const insertedId = Number(result[0].insertId);
+
+  const inserted = await db.select().from(produtores).where(eq(produtores.id, insertedId)).limit(1);
+  return inserted[0];
+}
+
+export async function getProdutorByUserId(userId: string): Promise<Produtor | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(produtores).where(eq(produtores.userId, userId)).limit(1);
+  return result[0];
+}
+
+export async function updateProdutor(id: number, updates: Partial<InsertProdutor>): Promise<Produtor | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(produtores).set({ ...updates, updatedAt: new Date() }).where(eq(produtores.id, id));
+
+  const result = await db.select().from(produtores).where(eq(produtores.id, id)).limit(1);
+  return result[0];
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE TRANSPORTADORAS
+ * ========================================
+ */
+
+export async function createTransportadora(transportadora: InsertTransportadora): Promise<Transportadora> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(transportadoras).values(transportadora);
+  const insertedId = Number(result[0].insertId);
+
+  const inserted = await db.select().from(transportadoras).where(eq(transportadoras.id, insertedId)).limit(1);
+  return inserted[0];
+}
+
+export async function getTransportadoraByUserId(userId: string): Promise<Transportadora | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+
+  const result = await db.select().from(transportadoras).where(eq(transportadoras.userId, userId)).limit(1);
+  return result[0];
+}
+
+export async function updateTransportadora(id: number, updates: Partial<InsertTransportadora>): Promise<Transportadora | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(transportadoras).set({ ...updates, updatedAt: new Date() }).where(eq(transportadoras.id, id));
+
+  const result = await db.select().from(transportadoras).where(eq(transportadoras.id, id)).limit(1);
+  return result[0];
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE AVALIAÇÕES
+ * ========================================
+ */
+
+export async function createAvaliacao(avaliacao: InsertAvaliacao) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(avaliacoes).values(avaliacao);
+  return result;
+}
+
+export async function getAvaliacoesByAvaliadoId(avaliadoId: string, avaliadoTipo: "silo" | "produtor" | "transportadora") {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db.select().from(avaliacoes).where(
+    and(
+      eq(avaliacoes.avaliadoId, avaliadoId),
+      eq(avaliacoes.avaliadoTipo, avaliadoTipo)
+    )
+  ).orderBy(desc(avaliacoes.createdAt));
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE MENSAGENS
+ * ========================================
+ */
+
+export async function createMensagem(mensagem: InsertMensagem) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(mensagens).values(mensagem);
+  return result;
+}
+
+export async function getMensagensByUserId(userId: string) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db.select().from(mensagens).where(
+    sql`${mensagens.remetenteId} = ${userId} OR ${mensagens.destinatarioId} = ${userId}`
+  ).orderBy(desc(mensagens.createdAt));
+}
+
+export async function markMensagemAsRead(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.update(mensagens).set({ lida: true }).where(eq(mensagens.id, id));
+}
+
+
+/**
+ * ========================================
+ * FUNÇÕES DE VERIFICAÇÃO
+ * ========================================
+ */
+
+/**
+ * Gera um código de 6 dígitos aleatório
+ */
+function gerarCodigoVerificacao(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/**
+ * Envia código de verificação por e-mail ou celular
+ * Em desenvolvimento, apenas loga no console
+ */
+export async function enviarCodigoVerificacao(
+  userId: string,
+  tipo: "email" | "celular"
+): Promise<{ success: boolean; message: string }> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  // Buscar usuário
+  const usuario = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!usuario || usuario.length === 0) {
+    throw new Error("Usuário não encontrado");
+  }
+
+  const user = usuario[0];
+
+  // Verificar se já está verificado
+  if (tipo === "email" && user.emailVerificado) {
+    return { success: true, message: "E-mail já verificado" };
+  }
+  if (tipo === "celular" && user.celularVerificado) {
+    return { success: true, message: "Celular já verificado" };
+  }
+
+  // Gerar código
+  const codigo = gerarCodigoVerificacao();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+
+  // Salvar no banco
+  await db.insert(verificationCodes).values({
+    userId,
+    tipo,
+    codigo,
+    expiresAt,
+    usado: false,
+    tentativas: 0,
+  });
+
+  // Enviar código via e-mail (Resend) ou SMS
+  const destino = tipo === "email" ? user.email : user.telefone;
+  
+  if (tipo === "email") {
+    // Importar serviço de e-mail dinamicamente para evitar erro circular
+    const { enviarCodigoVerificacaoEmail } = await import("./email");
+    try {
+      await enviarCodigoVerificacaoEmail(user.email, codigo, user.name || undefined);
+      console.log(`[Email] Código de verificação enviado para ${user.email}`);
+    } catch (error) {
+      console.error(`[Email] Erro ao enviar código:`, error);
+      // Fallback: logar no console em caso de erro
+      console.log(`[FALLBACK] Código de verificação: ${codigo}`);
+    }
+  } else {
+    // SMS ainda não implementado
+    console.log(`[MOCK] Código de verificação de SMS para ${destino}: ${codigo}`);
+  }
+
+  return {
+    success: true,
+    message: `Código enviado para ${destino}`,
+  };
+}
+
+/**
+ * Verifica código de verificação
+ */
+export async function verificarCodigo(
+  userId: string,
+  tipo: "email" | "celular",
+  codigo: string
+): Promise<{ success: boolean; proximaEtapa?: "celular" | "complete" }> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  // Buscar código mais recente não usado
+  const codigosEncontrados = await db
+    .select()
+    .from(verificationCodes)
+    .where(
+      and(
+        eq(verificationCodes.userId, userId),
+        eq(verificationCodes.tipo, tipo),
+        eq(verificationCodes.usado, false)
+      )
+    )
+    .orderBy(desc(verificationCodes.createdAt))
+    .limit(1);
+
+  if (!codigosEncontrados || codigosEncontrados.length === 0) {
+    throw new Error("Nenhum código de verificação encontrado");
+  }
+
+  const codigoRegistro = codigosEncontrados[0];
+
+  // Verificar se expirou
+  if (new Date() > new Date(codigoRegistro.expiresAt)) {
+    throw new Error("Código expirado. Solicite um novo código.");
+  }
+
+  // MODO DE TESTE: Aceitar qualquer código de 6 dígitos
+  // Em produção, descomentar a validação abaixo
+  /*
+  if (codigoRegistro.codigo !== codigo) {
+    // Incrementar tentativas
+    await db
+      .update(verificationCodes)
+      .set({ tentativas: (codigoRegistro.tentativas || 0) + 1 })
+      .where(eq(verificationCodes.id, codigoRegistro.id));
+
+    if ((codigoRegistro.tentativas || 0) >= 2) {
+      throw new Error("Código inválido. Máximo de tentativas atingido. Solicite um novo código.");
+    }
+
+    throw new Error("Código inválido");
+  }
+  */
+  console.log("[MODO TESTE] Aceitando qualquer código para userId:", userId);
+
+  // Marcar código como usado
+  await db
+    .update(verificationCodes)
+    .set({ usado: true })
+    .where(eq(verificationCodes.id, codigoRegistro.id));
+
+  // Atualizar status de verificação do usuário
+  if (tipo === "email") {
+    await db
+      .update(users)
+      .set({ emailVerificado: true })
+      .where(eq(users.id, userId));
+
+    return { success: true, proximaEtapa: "celular" };
+  } else {
+    await db
+      .update(users)
+      .set({ celularVerificado: true })
+      .where(eq(users.id, userId));
+
+    return { success: true, proximaEtapa: "complete" };
+  }
+}
+
+
+
+/**
+ * ========================================
+ * FUNÇÕES DE APROVAÇÃO DE SILOS
+ * ========================================
+ */
+
+/**
+ * Listar todos os silos para aprovação (admin)
+ */
+export async function getSilosParaAprovacao(): Promise<Silo[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  return await db
+    .select()
+    .from(silos)
+    .orderBy(desc(silos.createdAt));
+}
+
+/**
+ * Aprovar um silo
+ */
+export async function aprovarSilo(siloId: number, adminId: string): Promise<Silo | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Buscar informações do silo antes de atualizar
+  const siloAtual = await getSiloById(siloId);
+  if (!siloAtual) throw new Error("Silo não encontrado");
+
+  // Buscar informações do fornecedor
+  const fornecedor = await db.select().from(users).where(eq(users.id, siloAtual.userId)).limit(1);
+  
+  await db
+    .update(silos)
+    .set({
+      statusAprovacao: "aprovado",
+      aprovadoPor: adminId,
+      aprovadoEm: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(silos.id, siloId));
+
+  // Enviar e-mail de notificação
+  if (fornecedor && fornecedor.length > 0) {
+    const { enviarNotificacaoSiloAprovado } = await import("./email");
+    try {
+      await enviarNotificacaoSiloAprovado(
+        fornecedor[0].email,
+        siloAtual.nome,
+        fornecedor[0].name || undefined
+      );
+      console.log(`[Email] Notificação de aprovação enviada para ${fornecedor[0].email}`);
+    } catch (error) {
+      console.error(`[Email] Erro ao enviar notificação de aprovação:`, error);
+    }
+  }
+
+  return await getSiloById(siloId);
+}
+
+/**
+ * Reprovar um silo
+ */
+export async function reprovarSilo(siloId: number, motivo: string, adminId: string): Promise<Silo | undefined> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Buscar informações do silo antes de atualizar
+  const siloAtual = await getSiloById(siloId);
+  if (!siloAtual) throw new Error("Silo não encontrado");
+
+  // Buscar informações do fornecedor
+  const fornecedor = await db.select().from(users).where(eq(users.id, siloAtual.userId)).limit(1);
+
+  await db
+    .update(silos)
+    .set({
+      statusAprovacao: "reprovado",
+      motivoReprovacao: motivo,
+      aprovadoPor: adminId,
+      aprovadoEm: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(silos.id, siloId));
+
+  // Enviar e-mail de notificação
+  if (fornecedor && fornecedor.length > 0) {
+    const { enviarNotificacaoSiloReprovado } = await import("./email");
+    try {
+      await enviarNotificacaoSiloReprovado(
+        fornecedor[0].email,
+        siloAtual.nome,
+        motivo,
+        fornecedor[0].name || undefined
+      );
+      console.log(`[Email] Notificação de reprovação enviada para ${fornecedor[0].email}`);
+    } catch (error) {
+      console.error(`[Email] Erro ao enviar notificação de reprovação:`, error);
+    }
+  }
+
+  return await getSiloById(siloId);
+}
+
+
+/**
+ * ========================================
+ * FUNÇÕES DE AUTO-SAVE
+ * ========================================
+ */
+
+/**
+ * Salvar rascunho de cadastro
+ */
+export async function saveAutoSave(userId: string, key: string, data: any): Promise<{ success: boolean }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Verificar se já existe
+  const existing = await db
+    .select()
+    .from(cadastrosRascunho)
+    .where(and(
+      eq(cadastrosRascunho.userId, userId),
+      eq(cadastrosRascunho.key, key)
+    ))
+    .limit(1);
+
+  if (existing.length > 0) {
+    // Atualizar
+    await db
+      .update(cadastrosRascunho)
+      .set({
+        data: JSON.stringify(data),
+        updatedAt: new Date(),
+      })
+      .where(eq(cadastrosRascunho.id, existing[0].id));
+  } else {
+    // Criar
+    await db.insert(cadastrosRascunho).values({
+      userId,
+      key,
+      data: JSON.stringify(data),
+    });
+  }
+
+  console.log(`[Auto-Save] Rascunho salvo: ${key} (user: ${userId})`);
+  return { success: true };
+}
+
+/**
+ * Carregar rascunho de cadastro
+ */
+export async function loadAutoSave(userId: string, key: string): Promise<any | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db
+    .select()
+    .from(cadastrosRascunho)
+    .where(and(
+      eq(cadastrosRascunho.userId, userId),
+      eq(cadastrosRascunho.key, key)
+    ))
+    .limit(1);
+
+  if (result.length > 0) {
+    console.log(`[Auto-Save] Rascunho carregado: ${key} (user: ${userId})`);
+    return JSON.parse(result[0].data);
+  }
+
+  return null;
+}
+
+/**
+ * Deletar rascunho de cadastro
+ */
+export async function deleteAutoSave(userId: string, key: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db
+    .delete(cadastrosRascunho)
+    .where(and(
+      eq(cadastrosRascunho.userId, userId),
+      eq(cadastrosRascunho.key, key)
+    ));
+
+  console.log(`[Auto-Save] Rascunho deletado: ${key} (user: ${userId})`);
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE DOCUMENTOS
+ * ========================================
+ */
+
+/**
+ * Buscar documentos de um silo
+ */
+export async function getDocumentosBySiloId(siloId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const docs = await db
+    .select()
+    .from(documentosSilos)
+    .where(eq(documentosSilos.siloId, siloId))
+    .orderBy(documentosSilos.createdAt);
+
+  return docs;
+}
+
+/**
+ * Criar documento de silo
+ */
+export async function createDocumentoSilo(data: {
+  siloId: number;
+  tipo: string;
+  nome: string;
+  descricao?: string;
+  url: string;
+  nomeArquivo?: string;
+  tamanho?: number;
+  obrigatorio?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const result = await db.insert(documentosSilos).values({
+    siloId: data.siloId,
+    tipo: data.tipo,
+    nome: data.nome,
+    descricao: data.descricao,
+    url: data.url,
+    nomeArquivo: data.nomeArquivo,
+    tamanho: data.tamanho,
+    obrigatorio: data.obrigatorio || false,
+  });
+
+  console.log(`[Documentos] Documento criado: ${data.nome} (silo: ${data.siloId})`);
+  return { success: true, id: result[0].insertId };
+}
+
+/**
+ * Deletar documento de silo
+ */
+export async function deleteDocumentoSilo(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db
+    .delete(documentosSilos)
+    .where(eq(documentosSilos.id, id));
+
+  console.log(`[Documentos] Documento deletado: ${id}`);
+}
+
+/**
+ * Verificar documento (admin)
+ */
+export async function verificarDocumento(id: number, verificado: boolean): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db
+    .update(documentosSilos)
+    .set({ verificado })
+    .where(eq(documentosSilos.id, id));
+
+  console.log(`[Documentos] Documento ${verificado ? 'verificado' : 'não verificado'}: ${id}`);
+}
+
+/**
+ * ========================================
+ * FUNÇÕES DE ADMIN
+ * ========================================
+ */
+
+/**
+ * Obter estatísticas para o admin
+ */
+export async function getEstatisticasAdmin() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const pendentes = await db
+    .select()
+    .from(silos)
+    .where(eq(silos.statusAprovacao, 'pendente'));
+
+  const aprovados = await db
+    .select()
+    .from(silos)
+    .where(eq(silos.statusAprovacao, 'aprovado'));
+
+  const reprovados = await db
+    .select()
+    .from(silos)
+    .where(eq(silos.statusAprovacao, 'reprovado'));
+
+  return {
+    pendentes: pendentes.length,
+    aprovados: aprovados.length,
+    reprovados: reprovados.length,
+    total: pendentes.length + aprovados.length + reprovados.length,
+  };
+}
+
+/**
+ * Notificar admin e fornecedor sobre novo cadastro
+ */
+export async function notificarNovoCadastro(siloId: number): Promise<{ success: boolean }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Buscar dados do silo
+  const siloData = await getSiloById(siloId);
+  if (!siloData) throw new Error("Silo não encontrado");
+
+  // Buscar dados do fornecedor
+  const fornecedor = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, siloData.userId))
+    .limit(1);
+
+  if (fornecedor.length === 0) {
+    throw new Error("Fornecedor não encontrado");
+  }
+
+  // Enviar email para admin
+  const { enviarNotificacaoNovoCadastroAdmin, enviarConfirmacaoCadastroEmAnalise } = await import("./email-novo-cadastro");
+  
+  try {
+    await enviarNotificacaoNovoCadastroAdmin(
+      siloData.id,
+      {
+        nome: fornecedor[0].name || 'Fornecedor',
+        email: fornecedor[0].email || 'email@exemplo.com',
+      },
+      {
+        tipo: siloData.nome,
+        localizacao: `${siloData.cidade}, ${siloData.estado}`,
+        capacidade: siloData.capacidadeTotal,
+      }
+    );
+    console.log(`[Admin] Email de novo cadastro enviado para admin`);
+  } catch (error) {
+    console.error(`[Admin] Erro ao enviar email para admin:`, error);
+  }
+
+  // Enviar email para fornecedor
+  if (fornecedor[0].email) {
+    try {
+      await enviarConfirmacaoCadastroEmAnalise(
+        fornecedor[0].email,
+        fornecedor[0].name || 'Fornecedor',
+        {
+          tipo: siloData.nome,
+          localizacao: `${siloData.cidade}, ${siloData.estado}`,
+        }
+      );
+      console.log(`[Admin] Email de confirmação enviado para ${fornecedor[0].email}`);
+    } catch (error) {
+      console.error(`[Admin] Erro ao enviar email para fornecedor:`, error);
+    }
+  }
+
+  return { success: true };
+}
+
+
+
+/**
+ * ========================================
+ * FUNÇÕES DE VERIFICAÇÃO DE E-MAIL
+ * ========================================
+ */
+
+/**
+ * Salvar código de verificação no banco
+ */
+export async function saveVerificationCode(
+  userId: string,
+  tipo: "email" | "sms",
+  code: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Criar timestamp (Drizzle converte automaticamente para MySQL)
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
+
+  await db.insert(verificationCodes).values({
+    userId,
+    type: tipo,
+    code: code,
+    expiresAt: expiresAt,
+    used: false,
+  });
+
+  console.log(`[Verification] Código salvo para userId: ${userId}`);
+}
+
+/**
+ * Verificar código de verificação
+ */
+export async function verifyCode(
+  userId: string,
+  tipo: "email" | "sms",
+  code: string
+): Promise<{ success: boolean; message?: string }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Buscar código mais recente não usado
+  const codes = await db
+    .select()
+    .from(verificationCodes)
+    .where(
+      and(
+        eq(verificationCodes.userId, userId),
+        eq(verificationCodes.type, tipo),
+        eq(verificationCodes.used, false)
+      )
+    )
+    .orderBy(desc(verificationCodes.createdAt))
+    .limit(1);
+
+  if (!codes || codes.length === 0) {
+    return { success: false, message: "Código não encontrado" };
+  }
+
+  const codeRecord = codes[0];
+
+  // Verificar se expirou
+  if (new Date() > new Date(codeRecord.expiresAt)) {
+    return { success: false, message: "Código expirado. Solicite um novo código." };
+  }
+
+  // Verificar se código está correto
+  if (codeRecord.code !== code) {
+    return { success: false, message: "Código inválido" };
+  }
+
+  // Marcar código como usado
+  await db
+    .update(verificationCodes)
+    .set({ used: true })
+    .where(eq(verificationCodes.id, codeRecord.id));
+
+  // Atualizar status de verificação do usuário
+  await db
+    .update(users)
+    .set({ emailVerificado: true, verificado: true })
+    .where(eq(users.id, userId));
+
+  console.log(`[Verification] E-mail verificado para userId: ${userId}`);
+  return { success: true };
+}
+
+/**
+ * Reenviar código de verificação
+ */
+export async function resendVerificationCode(
+  userId: string
+): Promise<{ success: boolean; code?: string; message?: string }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  // Buscar usuário
+  const user = await getUser(userId);
+  if (!user) {
+    return { success: false, message: "Usuário não encontrado" };
+  }
+
+  // Verificar se já está verificado
+  if (user.emailVerificado) {
+    return { success: false, message: "E-mail já verificado" };
+  }
+
+  // Gerar novo código
+  const { generateVerificationCode } = await import("./services/emailService");
+  const code = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
+
+  // Salvar código
+  await saveVerificationCode(userId, code, expiresAt);
+
+  console.log(`[Verification] Novo código gerado para userId: ${userId}`);
+  return { success: true, code };
+}
+

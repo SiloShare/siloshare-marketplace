@@ -1,0 +1,388 @@
+import { useState } from "react";
+import { useLocation } from "wouter";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Slider } from "@/components/ui/slider";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { MapPin, Warehouse, DollarSign, Star, Filter, X, Search, ChevronDown, ChevronUp } from "lucide-react";
+import { trpc } from "@/lib/trpc";
+
+const TIPOS_SILO = ["Silo Metálico", "Armazém Graneleiro", "Silo Bolsa", "Outro"];
+
+export default function BuscarArmazenagem() {
+  const [, setLocation] = useLocation();
+  const [mostrarFiltrosAvancados, setMostrarFiltrosAvancados] = useState(false);
+  
+  const [filters, setFilters] = useState({
+    cidade: "",
+    estado: "",
+    capacidadeMin: "",
+    precoMax: "",
+    infraSecagem: false,
+    infraLimpeza: false,
+    infraAeracao: false,
+    infraMonitoramento: false,
+  });
+
+  const { data: silos, isLoading } = trpc.silos.list.useQuery(
+    filters.cidade || filters.estado
+      ? {
+          cidade: filters.cidade || undefined,
+          estado: filters.estado || undefined,
+          disponivel: true,
+        }
+      : undefined
+  );
+
+  const formatPrice = (price: string) => {
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+    }).format(parseFloat(price));
+  };
+
+  const parseTiposGraos = (tiposGraosJson: string): string[] => {
+    try {
+      return JSON.parse(tiposGraosJson);
+    } catch {
+      return [];
+    }
+  };
+
+  const limparFiltros = () => {
+    setFilters({
+      cidade: "",
+      estado: "",
+      capacidadeMin: "",
+      precoMax: "",
+      infraSecagem: false,
+      infraLimpeza: false,
+      infraAeracao: false,
+      infraMonitoramento: false,
+    });
+  };
+
+  // Filtrar silos localmente com base nos filtros avançados
+  const silosFiltrados = silos?.filter((silo) => {
+    if (filters.capacidadeMin && silo.capacidadeDisponivel < parseInt(filters.capacidadeMin)) {
+      return false;
+    }
+    if (filters.precoMax && parseFloat(silo.precoTonMes) > parseFloat(filters.precoMax)) {
+      return false;
+    }
+    if (filters.infraSecagem && !silo.infraSecagem) return false;
+    if (filters.infraLimpeza && !silo.infraLimpeza) return false;
+    if (filters.infraAeracao && !silo.infraAeracao) return false;
+    if (filters.infraMonitoramento && !silo.infraMonitoramento) return false;
+    return true;
+  });
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="border-b bg-white sticky top-0 z-50 shadow-sm">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setLocation("/")}>
+            <span className="text-3xl">🌾</span>
+            <span className="text-2xl font-bold text-black">SiloShare</span>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={() => setLocation("/cadastrar-silo")} variant="outline">
+              Cadastrar Silo
+            </Button>
+            <Button onClick={() => setLocation("/login")} className="bg-black hover:bg-gray-800">
+              Entrar
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* Filtros */}
+      <div className="container mx-auto px-4 py-8">
+        <Card className="mb-8">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-2xl">Buscar Armazenagem</CardTitle>
+                <CardDescription>Encontre silos disponíveis próximos à sua propriedade</CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => setMostrarFiltrosAvancados(!mostrarFiltrosAvancados)}
+                className="flex items-center gap-2"
+              >
+                <Filter className="w-4 h-4" />
+                Filtros Avançados
+                {mostrarFiltrosAvancados ? (
+                  <ChevronUp className="w-4 h-4" />
+                ) : (
+                  <ChevronDown className="w-4 h-4" />
+                )}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Filtros Básicos */}
+            <div className="grid md:grid-cols-4 gap-4">
+              <div>
+                <Label htmlFor="cidade">Cidade</Label>
+                <Input
+                  id="cidade"
+                  value={filters.cidade}
+                  onChange={(e) => setFilters({ ...filters, cidade: e.target.value })}
+                  placeholder="Ex: Sorriso"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="estado">Estado</Label>
+                <Input
+                  id="estado"
+                  value={filters.estado}
+                  onChange={(e) => setFilters({ ...filters, estado: e.target.value.toUpperCase() })}
+                  placeholder="Ex: MT"
+                  maxLength={2}
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="capacidade">Capacidade Mínima (ton)</Label>
+                <Input
+                  id="capacidade"
+                  type="number"
+                  value={filters.capacidadeMin}
+                  onChange={(e) => setFilters({ ...filters, capacidadeMin: e.target.value })}
+                  placeholder="Ex: 5000"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="preco">Preço Máximo (R$/ton/mês)</Label>
+                <Input
+                  id="preco"
+                  type="number"
+                  value={filters.precoMax}
+                  onChange={(e) => setFilters({ ...filters, precoMax: e.target.value })}
+                  placeholder="Ex: 30.00"
+                />
+              </div>
+            </div>
+
+            {/* Filtros Avançados */}
+            {mostrarFiltrosAvancados && (
+              <div className="border-t pt-6 space-y-4">
+                <h3 className="font-semibold text-lg">Infraestrutura Necessária</h3>
+                <div className="grid md:grid-cols-4 gap-4">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="secagem"
+                      checked={filters.infraSecagem}
+                      onCheckedChange={(checked) =>
+                        setFilters({ ...filters, infraSecagem: checked as boolean })
+                      }
+                    />
+                    <label htmlFor="secagem" className="text-sm cursor-pointer">
+                      Secagem
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="limpeza"
+                      checked={filters.infraLimpeza}
+                      onCheckedChange={(checked) =>
+                        setFilters({ ...filters, infraLimpeza: checked as boolean })
+                      }
+                    />
+                    <label htmlFor="limpeza" className="text-sm cursor-pointer">
+                      Limpeza
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="aeracao"
+                      checked={filters.infraAeracao}
+                      onCheckedChange={(checked) =>
+                        setFilters({ ...filters, infraAeracao: checked as boolean })
+                      }
+                    />
+                    <label htmlFor="aeracao" className="text-sm cursor-pointer">
+                      Aeração
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="monitoramento"
+                      checked={filters.infraMonitoramento}
+                      onCheckedChange={(checked) =>
+                        setFilters({ ...filters, infraMonitoramento: checked as boolean })
+                      }
+                    />
+                    <label htmlFor="monitoramento" className="text-sm cursor-pointer">
+                      Monitoramento 24/7
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Botões de Ação */}
+            <div className="flex gap-2 pt-4 border-t">
+              <Button onClick={limparFiltros} variant="outline" className="flex-1">
+                <X className="w-4 h-4 mr-2" />
+                Limpar Filtros
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Resultados */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-2xl font-bold">
+              {isLoading ? "Carregando..." : `${silosFiltrados?.length || 0} silos encontrados`}
+            </h2>
+          </div>
+
+          {isLoading ? (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[1, 2, 3].map((i) => (
+                <Card key={i} className="animate-pulse">
+                  <CardHeader>
+                    <div className="h-6 bg-gray-200 rounded w-3/4"></div>
+                    <div className="h-4 bg-gray-200 rounded w-1/2 mt-2"></div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      <div className="h-4 bg-gray-200 rounded"></div>
+                      <div className="h-4 bg-gray-200 rounded"></div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : silosFiltrados && silosFiltrados.length > 0 ? (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {silosFiltrados.map((silo) => (
+                <Card key={silo.id} className="hover:shadow-lg transition cursor-pointer">
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <CardTitle className="text-xl mb-1">{silo.nome}</CardTitle>
+                        <CardDescription className="flex items-center gap-1">
+                          <MapPin className="w-4 h-4" />
+                          {silo.cidade}, {silo.estado}
+                        </CardDescription>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {silo.descricao && (
+                      <p className="text-sm text-gray-600 line-clamp-2">{silo.descricao}</p>
+                    )}
+
+                    {/* Capacidade */}
+                    <div>
+                      <div className="flex justify-between text-sm mb-1">
+                        <span className="text-gray-600">Capacidade Disponível</span>
+                        <span className="font-semibold">
+                          {silo.capacidadeDisponivel.toLocaleString()} / {silo.capacidadeTotal.toLocaleString()} ton
+                        </span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-green-600 h-2 rounded-full"
+                          style={{ width: `${(silo.capacidadeDisponivel / silo.capacidadeTotal) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Tipos de Grãos */}
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Grãos aceitos:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {parseTiposGraos(silo.tiposGraos).map((grao) => (
+                          <Badge key={grao} variant="secondary" className="text-xs">
+                            {grao}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Infraestrutura */}
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Infraestrutura:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {silo.infraSecagem && (
+                          <Badge variant="outline" className="text-xs">
+                            🔥 Secagem
+                          </Badge>
+                        )}
+                        {silo.infraLimpeza && (
+                          <Badge variant="outline" className="text-xs">
+                            ✨ Limpeza
+                          </Badge>
+                        )}
+                        {silo.infraAeracao && (
+                          <Badge variant="outline" className="text-xs">
+                            💨 Aeração
+                          </Badge>
+                        )}
+                        {silo.infraMonitoramento && (
+                          <Badge variant="outline" className="text-xs">
+                            📡 Monitoramento
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Preço */}
+                    <div className="border-t pt-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-1">
+                            <DollarSign className="w-5 h-5 text-green-600" />
+                            <span className="text-2xl font-bold">
+                              {formatPrice(silo.precoTonMes)}
+                            </span>
+                            <span className="text-sm text-gray-600">/ton/mês</span>
+                          </div>
+                        </div>
+                        <Button
+                          onClick={() => setLocation(`/silo/${silo.id}`)}
+                          className="bg-green-600 hover:bg-green-700"
+                        >
+                          Ver Detalhes
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <Warehouse className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+                <h3 className="text-xl font-semibold mb-2">Nenhum silo encontrado</h3>
+                <p className="text-gray-600 mb-4">
+                  Tente ajustar os filtros de busca ou expandir a área de pesquisa
+                </p>
+                <Button onClick={limparFiltros} variant="outline">
+                  Limpar Filtros
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
